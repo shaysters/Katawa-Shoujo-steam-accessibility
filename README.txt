@@ -40,4 +40,4 @@ KEYS
 
 CREDITS
 -------
-Mod by Shaysters, developed with Claude (Anthropic).
+Mod by Shaysters, developed with Claude (Anthropic) and Codex (OpenAI).

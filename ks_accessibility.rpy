@@ -313,6 +313,8 @@ init python:
     _ks_backend_name = u"none"
     _ks_last_spoken = u""        # last spoken text — used by R (repeat) and Shift+C (clipboard)
     _ks_last_dialogue = u""      # last dialogue spoken — used only by extend detection in display_say hook
+    _ks_pending_dialogue_who = None
+    _ks_pending_dialogue_text = u""
     _ks_bootstrap_done = False
     _ks_last_focus_spoken = u""
 
@@ -501,10 +503,55 @@ init python:
 
     _ks_orig_display_say = renpy.character.display_say
 
+    def _ks_merge_dialogue_fragments(existing, incoming):
+        if not existing:
+            return incoming or u""
+        if not incoming:
+            return existing
+
+        a = unicode(existing)
+        b = unicode(incoming)
+
+        if b.startswith(a):
+            return b
+        if a.startswith(b):
+            return a
+        if a.endswith(b):
+            return a
+        if b.endswith(a):
+            return b
+
+        max_overlap = min(len(a), len(b))
+        for overlap in range(max_overlap, 0, -1):
+            if a[-overlap:] == b[:overlap]:
+                return a + b[overlap:]
+
+        if b[:1].isspace() or a[-1:].isspace():
+            return a + b
+        return a + u" " + b
+
+    def _ks_flush_pending_dialogue(interrupt=True):
+        global _ks_last_dialogue, _ks_pending_dialogue_who, _ks_pending_dialogue_text
+        if not _ks_pending_dialogue_text:
+            return
+
+        if _ks_pending_dialogue_who and _ks_pending_dialogue_who != u"#":
+            speech = _ks_pending_dialogue_who + u": " + _ks_pending_dialogue_text
+        else:
+            speech = _ks_pending_dialogue_text
+
+        _ks_last_dialogue = speech
+        _ks_dlog("DIALOGUE [flush]: " + repr(speech[:100]))
+        ks_speak(speech, interrupt=interrupt)
+        _ks_pending_dialogue_who = None
+        _ks_pending_dialogue_text = u""
+
     def _ks_display_say_hook(who, what, *args, **kwargs):
         try:
             who_clean = _ks_strip_tags(who).strip() if who else u""
             what_clean = _ks_strip_tags(what).strip() if what else u""
+            what_raw = unicode(what) if what else u""
+            has_nowait = u"{nw}" in what_raw
             # Skip empty lines — they are pause/transition markers, not real dialogue.
             if not what_clean:
                 pass
@@ -521,15 +568,27 @@ init python:
                 # Speak only the appended portion to avoid re-reading the same prefix.
                 # Uses _ks_last_dialogue (not _ks_last_spoken) so that hover/focus
                 # events between two display_say calls cannot poison the detection.
-                global _ks_last_dialogue
-                if _ks_last_dialogue and speech.startswith(_ks_last_dialogue):
-                    tail = speech[len(_ks_last_dialogue):].strip()
-                    if tail:
-                        _ks_dlog("DIALOGUE [extend]: " + repr(tail[:100]))
-                        _ks_last_dialogue = speech
-                        ks_speak(tail, interrupt=False)
+                global _ks_last_dialogue, _ks_pending_dialogue_who, _ks_pending_dialogue_text
+                if _ks_pending_dialogue_text and _ks_pending_dialogue_who != who_clean:
+                    _ks_flush_pending_dialogue(interrupt=True)
+                merged_text = what_clean
+                if _ks_pending_dialogue_text and _ks_pending_dialogue_who == who_clean:
+                    merged_text = _ks_merge_dialogue_fragments(_ks_pending_dialogue_text, what_clean)
                     # else pure duplicate — skip entirely
+                if has_nowait:
+                    _ks_pending_dialogue_who = who_clean
+                    _ks_pending_dialogue_text = merged_text
+                    _ks_dlog("DIALOGUE [buffer]: " + repr(merged_text[:100]))
                 else:
+                    if _ks_pending_dialogue_text and _ks_pending_dialogue_who == who_clean:
+                        what_clean = merged_text
+                        _ks_pending_dialogue_who = None
+                        _ks_pending_dialogue_text = u""
+
+                    if who_clean and who_clean != u"#":
+                        speech = who_clean + u": " + what_clean
+                    else:
+                        speech = what_clean
                     _ks_last_dialogue = speech
                     _ks_dlog("DIALOGUE: " + repr(speech[:100]))
                     ks_speak(speech, interrupt=True)
@@ -591,6 +650,7 @@ init 1 python:
             try:
                 has_choices = any(val is not None and label for label, val in items)
                 if has_choices:
+                    _ks_flush_pending_dialogue(interrupt=True)
                     ks_log("CHOICE MENU: prompting")
                     ks_speak(u"Make a choice.", interrupt=True)
             except:
@@ -717,6 +777,7 @@ init 1 python:
     def _ks_label_callback_wrapper(label, not_ft):
         try:
             ks_log("LABEL: " + str(label) + " (not_ft=" + str(not_ft) + ")")
+            _ks_flush_pending_dialogue(interrupt=True)
             announcement = _ks_label_announcements.get(label)
             if announcement:
                 global _ks_last_focus_spoken
@@ -744,6 +805,11 @@ init 1 python:
                         ks_speak(full, interrupt=True)
                 else:
                     ks_speak(announcement, interrupt=True)
+            elif label == "scene_deleted":
+                if not config.r18:
+                    ks_speak(u"Adult scene omitted in this build.", interrupt=True)
+                elif getattr(persistent, 'hdisabled', False):
+                    ks_speak(u"Adult scenes are currently disabled in settings.", interrupt=True)
         except:
             ks_log("ERROR label_callback wrapper: " + traceback.format_exc())
         if _ks_game_label_callback:
@@ -967,6 +1033,7 @@ init 3 python:
         def _ks_prompt_patched(screen, message, image=None, isyesno=False,
                                background=None, transition=None, interact=True):
             try:
+                _ks_flush_pending_dialogue(interrupt=True)
                 msg_clean = _ks_strip_tags(unicode(message)).strip() if message else u""
                 if msg_clean:
                     ks_log("PROMPT: " + repr(msg_clean[:80]))
