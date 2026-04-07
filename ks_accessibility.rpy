@@ -1052,3 +1052,28 @@ init 3 python:
         ks_log("INIT: _prompt hook installed.")
     else:
         ks_log("WARNING: store._prompt not found. Confirm dialog questions will be silent.")
+
+    # ---- written_note hook: speak physical in-game notes ----
+    # written_note(text) displays notes and labels that do not pass through
+    # display_say, so they need their own speech hook.
+
+    if hasattr(store, 'written_note'):
+        _ks_orig_written_note = store.written_note
+
+        def _ks_written_note_patched(text, window_args={}, text_args={}, quiet=False):
+            try:
+                msg = _ks_strip_tags(unicode(text)).strip() if text else u""
+                if msg:
+                    if not msg.lower().startswith(u"note:"):
+                        msg = u"Note: " + msg
+                    ks_log("NOTE [written_note]: " + repr(msg[:80]))
+                    ks_speak(msg, interrupt=True)
+            except:
+                ks_log("ERROR written_note hook: " + traceback.format_exc())
+            return _ks_orig_written_note(text, window_args=window_args,
+                                         text_args=text_args, quiet=quiet)
+
+        store.written_note = _ks_written_note_patched
+        ks_log("INIT: written_note hook installed.")
+    else:
+        ks_log("WARNING: store.written_note not found. Written notes will be silent.")
