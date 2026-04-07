@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.1
+
+- Restored automatic `written_note` reading so in-game notes are spoken again by screen readers.
+
 ## 1.2
 
 - Fixed repeated speech on `{nw}` / `extend` dialogue chains by buffering partial lines and only speaking the completed line once.
